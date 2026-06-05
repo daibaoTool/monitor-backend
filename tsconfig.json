@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    /* 基础配置 - 适配 Node.js 20 原生能力 */
+    "target": "ES2022",
+    "module": "NodeNext",
+    "lib": ["ES2022"],
+    "types": ["node"],
+    "moduleResolution": "node16",
+
+    /* 路径规范 */
+    "rootDir": "./src",
+    "outDir": "./dist",
+    "resolveJsonModule": true,
+
+    /* 类型安全 */
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "noFallthroughCasesInSwitch": true,
+
+    /* 模块兼容 - 适配 Express / 第三方库 */
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+
+    /* 生产构建优化 */
+    "removeComments": true,
+    "declaration": false
+  },
+
+  /* 编译范围 */
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "**/*.test.ts"]
+}
