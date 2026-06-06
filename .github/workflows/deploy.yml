@@ -1,0 +1,156 @@
+name: CI/CD 自动部署
+
+# ============================================================
+# 触发条件设计（Promotion-based Deployment 晋级式部署）
+# 与 video-to-audio-backend 设计完全一致，详见 infra/EVOLUTION.md
+#
+# push 分支         → 触发 CI（代码质量卡点）
+# workflow_dispatch → 触发 CI + CD（人工决策部署）
+#   event=deploy-dev  → CI 通过后构建镜像、部署测试环境
+#   event=deploy-prod → CI 通过后给 sha 镜像追加版本 tag、部署生产
+# ============================================================
+on:
+  push:
+    branches:
+      - '**'
+  workflow_dispatch:
+    inputs:
+      event:
+        description: '选择操作类型'
+        required: true
+        type: choice
+        options:
+          - deploy-dev
+          - deploy-prod
+      tag:
+        description: '生产部署时填写，对应测试验证过的 tag，如 v1.0.0'
+        required: false
+        default: ''
+
+jobs:
+  # ==================== CI：代码校验 ====================
+  # 触发：push 任意分支 或 workflow_dispatch（任意 event）
+  # 职责：代码质量卡点，deploy-dev / deploy-prod 都通过 needs: ci 强制依赖
+  ci:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout 代码
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: 设置 Node 版本
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
+        with:
+          node-version: '20'
+
+      - name: 安装依赖
+        run: npm install
+
+      # lock 文件不在仓库中时自动提交，保证 Docker build 可用 npm ci 锁定版本
+      - name: 提交 lock 文件（如有变更）
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet package-lock.json 2>/dev/null || ! git ls-files --error-unmatch package-lock.json 2>/dev/null; then
+            git add package-lock.json
+            git commit -m "chore: regenerate package-lock.json on CI [skip ci]"
+            git push
+          fi
+
+      - name: 类型检查
+        run: npm run type-check
+
+      - name: 构建校验
+        run: npm run build
+
+  # ==================== CD：测试环境部署 ====================
+  # 触发：workflow_dispatch + event=deploy-dev
+  # 职责：构建镜像（sha tag），部署到测试环境
+  deploy-dev:
+    needs: ci
+    if: github.event_name == 'workflow_dispatch' && inputs.event == 'deploy-dev'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout 代码
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: 生成 sha 镜像标签
+        id: meta
+        run: echo "SHA_TAG=${{ github.sha }}" >> $GITHUB_OUTPUT
+
+      - name: 构建 Docker 镜像
+        run: docker build -t monitor-backend:${{ steps.meta.outputs.SHA_TAG }} .
+
+      - name: 登录 Docker Hub
+        run: echo "${{ secrets.DOCKER_HUB_TOKEN }}" | docker login -u "${{ secrets.DOCKER_HUB_USERNAME }}" --password-stdin
+
+      - name: 推送镜像（sha tag）
+        run: |
+          docker tag monitor-backend:${{ steps.meta.outputs.SHA_TAG }} ${{ secrets.DOCKER_HUB_USERNAME }}/monitor-backend:${{ steps.meta.outputs.SHA_TAG }}
+          docker push ${{ secrets.DOCKER_HUB_USERNAME }}/monitor-backend:${{ steps.meta.outputs.SHA_TAG }}
+
+      - name: 触发 infra 仓库部署（测试环境）
+        uses: peter-evans/repository-dispatch@ff45666b9427631e3450c54a1bcbee4d9ff4d7c0  # v3
+        with:
+          token: ${{ secrets.INFRA_DEPLOY_TOKEN }}
+          repository: ${{ github.repository_owner }}/infra
+          event-type: deploy-monitor-backend
+          client-payload: |
+            {
+              "image_tag": "${{ steps.meta.outputs.SHA_TAG }}",
+              "environment": "dev"
+            }
+
+  # ==================== CD：生产环境部署 ====================
+  # 触发：workflow_dispatch + event=deploy-prod + 填写 tag
+  #
+  # 一次构建原则：不重新构建，给 sha 镜像追加语义版本 tag
+  deploy-prod:
+    needs: ci
+    if: github.event_name == 'workflow_dispatch' && inputs.event == 'deploy-prod'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 校验 tag 参数不能为空
+        run: |
+          if [ -z "${{ inputs.tag }}" ]; then
+            echo "❌ 生产部署必须填写 tag 参数，如 v1.0.0"
+            exit 1
+          fi
+
+      - name: Checkout 代码（用于获取 tag 对应的 sha）
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: 生成镜像标签
+        id: meta
+        run: |
+          echo "VERSION_TAG=${{ inputs.tag }}" >> $GITHUB_OUTPUT
+          echo "SHA_TAG=${{ github.sha }}" >> $GITHUB_OUTPUT
+
+      - name: 登录 Docker Hub
+        run: echo "${{ secrets.DOCKER_HUB_TOKEN }}" | docker login -u "${{ secrets.DOCKER_HUB_USERNAME }}" --password-stdin
+
+      # 不重新构建，给 sha 镜像追加语义版本 tag
+      - name: 给 sha 镜像追加语义版本 tag
+        run: |
+          docker buildx imagetools create \
+            --tag ${{ secrets.DOCKER_HUB_USERNAME }}/monitor-backend:${{ steps.meta.outputs.VERSION_TAG }} \
+            ${{ secrets.DOCKER_HUB_USERNAME }}/monitor-backend:${{ steps.meta.outputs.SHA_TAG }}
+
+      - name: 触发 infra 仓库部署（生产环境）
+        uses: peter-evans/repository-dispatch@ff45666b9427631e3450c54a1bcbee4d9ff4d7c0  # v3
+        with:
+          token: ${{ secrets.INFRA_DEPLOY_TOKEN }}
+          repository: ${{ github.repository_owner }}/infra
+          event-type: deploy-monitor-backend
+          client-payload: |
+            {
+              "image_tag": "${{ steps.meta.outputs.VERSION_TAG }}",
+              "environment": "prod"
+            }

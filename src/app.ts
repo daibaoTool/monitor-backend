@@ -12,20 +12,18 @@ initEventsTable();
 const app = express();
 const port = Number(process.env.PORT) || 3100;
 
-// CORS 白名单（多域名逗号分隔）
-// 未配置时默认空列表（安全默认值），同域 nginx 反代场景无需配置
-const corsOrigins = process.env.CORS_ORIGIN
-  ? process.env.CORS_ORIGIN.split(',').map((o) => o.trim())
-  : [];
-
-app.use(
-  cors({
-    origin: corsOrigins,
-    credentials: false, // 监控上报无需携带 Cookie
-    allowedHeaders: ['Content-Type', 'Authorization'],
-    methods: ['GET', 'POST', 'OPTIONS'],
-  }),
-);
+// CORS：允许所有来源
+//
+// monitor-backend 主要调用路径是：
+//   业务前端 → 同域 nginx → proxy_pass → monitor-backend
+// nginx 反代是服务端到服务端的请求，不经过浏览器，CORS 头对这条链路无效。
+//
+// 即使浏览器直连 monitor-backend（如本地开发调试），上报接口也无鉴权、
+// 写入的是上报数据而非读取敏感信息——CORS 限制在此无实际安全价值。
+//
+// 真正有意义的防护是 rate limiting（已有）+ appKey 标识来源（已有）。
+// 若未来增加数据查询接口（大盘 API），届时可针对该路由单独收紧 CORS 策略。
+app.use(cors({ credentials: false }));
 
 app.use(express.json({ limit: '1mb' })); // 单次上报最大 1MB，防止超大请求打穿内存
 // 监控后端不需要 XSS 中间件：
