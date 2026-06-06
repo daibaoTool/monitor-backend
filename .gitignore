@@ -10,7 +10,9 @@ dist/
 .env.*.local
 
 # ─── 数据库文件 ────────────────────────────────────────────────────────────────
-database/
+# /database/ 只忽略根目录下的数据目录（SQLite 持久化文件）
+# 不能写 database/（无前导斜杠会匹配所有层级，会误忽略 src/database/ 源码）
+/database/
 *.sqlite3
 *.sqlite3-shm
 *.sqlite3-wal
