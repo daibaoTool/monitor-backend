@@ -97,7 +97,9 @@ jobs:
         uses: peter-evans/repository-dispatch@ff45666b9427631e3450c54a1bcbee4d9ff4d7c0  # v3
         with:
           token: ${{ secrets.INFRA_DEPLOY_TOKEN }}
-          repository: q1875759084/infra  # infra 在个人账号下，不在 daibaoTool org
+          # TODO: infra 迁移到 daibaoTool org 后，改回动态写法：
+          # repository: ${{ github.repository_owner }}/infra
+          repository: q1875759084/infra
           event-type: deploy-monitor-backend
           client-payload: |
             {
@@ -147,7 +149,9 @@ jobs:
         uses: peter-evans/repository-dispatch@ff45666b9427631e3450c54a1bcbee4d9ff4d7c0  # v3
         with:
           token: ${{ secrets.INFRA_DEPLOY_TOKEN }}
-          repository: q1875759084/infra  # infra 在个人账号下，不在 daibaoTool org
+          # TODO: infra 迁移到 daibaoTool org 后，改回动态写法：
+          # repository: ${{ github.repository_owner }}/infra
+          repository: q1875759084/infra
           event-type: deploy-monitor-backend
           client-payload: |
             {
